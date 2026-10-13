@@ -1,3 +1,0 @@
-[submodule "lib/python-takserver-api"]
-	path = lib/python-takserver-api
-	url = https://github.com/sgofferj/python-takserver-api.git

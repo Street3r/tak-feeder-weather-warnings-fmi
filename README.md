@@ -1,76 +1,119 @@
-[![Build and publish the container image](https://github.com/sgofferj/tak-feeder-weather-warnings-fmi/actions/workflows/actions.yml/badge.svg)](https://github.com/sgofferj/tak-feeder-weather-warnings-fmi/actions/workflows/actions.yml)
-
 # tak-feeder-weather-warnings-fmi
 
-(C) 2025 Stefan Gofferje
-
-Licensed under the GNU General Public License V3 or later.
-
 > [!WARNING]
-> DO NOT USE FOR PRODUCTION YET - STILL TESTING
+> **Work in progress. Not recommended for use.** This fork is being improved
+> and has not been tested against a live TAK server yet. Things may change or
+> break without notice.
 
-## Description
+Gets the weather warnings of the Finnish Meteorological Institute (FMI) and
+keeps a TAK server mission in sync with them: each warning area is a polygon
+in the mission, and expired warnings are removed.
 
-The Finnish Meteorological Institute provides free API access to the weather data from their sensor network. This feeder gets
-weather warning data from the Finnish Meteorological Institute, processes them and adds them to a TAK server mission. Outdated
-warning areas are automatically removed from the mission.
+Fork of [sgofferj/tak-feeder-weather-warnings-fmi](https://github.com/sgofferj/tak-feeder-weather-warnings-fmi)
+by Stefan Gofferje.
 
 > [!NOTE]
-> Because the feeder uses the mission API, the Datasync plugin is required on the client side. The EUDs should also be reasonably
-> new because depending on the filter configuration, the mission can contain A LOT (hundreds) of polygon objects which will bring
-> older EUDs quickly down to their knees.
-> For the same reason, this feeder can cause quite a lot of traffic. Be smart when configuring update UPDATE_INTERVAL and filters!
+> The mission is delivered with the Mission API, so clients need the DataSync
+> plugin. Depending on the filters a mission can hold hundreds of polygons,
+> which is heavy for older devices and causes traffic. Choose
+> `UPDATE_INTERVAL` and the filters with care (upstream note).
+
+## What it sends
+
+| Field | Value |
+|---|---|
+| UID | hash of the warning, area and publication time (as upstream) |
+| Callsign | `FMI <event> <area>`, e.g. `FMI Wind warning for land areas Uusimaa` |
+| Type | `u-d-f` polygon, filled yellow / orange / red by warning level |
+| Start / stale | onset and expiry of the warning |
+| Remarks | headline, description, level, validity (local time), source, `#weather #warning #<event code>` |
+
+The feeder also keeps an `FMI` contact on the CoT stream; it is the creator
+of the mission items (as upstream).
+
+### Mission groups
+
+`MISSION_GROUP` takes one or more TAK groups, comma-separated. A new mission
+is created for all of them, so for example `WEATHER` lets members of the
+`WEATHER` group subscribe. The groups apply when the mission is created; for
+an existing mission change them in the TAK admin UI or delete the mission.
 
 ## Configuration
 
-The following values are supported and can be provided either as environment variables or through an .env-file.
+| Variable | Default | Purpose |
+|---|---|---|
+| `COT_URL` | `udp://239.2.3.1:6969` | TAK CoT stream for the FMI contact |
+| `PYTAK_TLS_CLIENT_CERT` / `PYTAK_TLS_CLIENT_KEY` | | Client certificate and unencrypted key (PEM), also used for the Mission API. Old names `CLIENT_CERT` / `CLIENT_KEY` work |
+| `PYTAK_TLS_DONT_VERIFY` | `0` | `1` = do not verify the server certificate |
+| `API_HOST` | | TAK server for the Mission API (port 8443) |
+| `MISSION_NAME` | `Weatherwarnings` | Mission name |
+| `MISSION_GROUP` | | Group(s) of a new mission, comma-separated |
+| `MISSION_TOKEN` | | Mission token, if the feeder cannot subscribe itself |
+| `MY_UID` | `fmi.0001` | UID of the FMI contact |
+| `FMI_LANG` | `en-GB` | Feed language: `en-GB`, `fi-FI`, `sv-FI` |
+| `FILTER_URGENCY` | `Expected,Immediate` | Urgencies to include (`Immediate`, `Expected`, `Future`) |
+| `FILTER_EVENTCODE` | all except `uvNote` | Warning types (see below) |
+| `UPDATE_INTERVAL` | `3600` | Seconds between rounds |
+| `RETRY_INTERVAL` | `300` | Wait after a failed round |
+| `TIMEZONE` | `Europe/Helsinki` | Time zone of the validity times |
+| `HEALTH_MAX_ERRORS` | `3` | Failed rounds in a row before the container is unhealthy |
+| `DEBUG` | `0` | Debug logging |
 
-| Variable         | Default                                                                             | Use       | Purpose                                                                                                         |
-| ---------------- | ----------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------- |
-| COT_URL          | empty                                                                               | mandatory | TAK server full URL, e.g. ssl://takserver:8089                                                                  |
-| UPDATE_INTERVAL  | 3600                                                                                | optional  | Interval between data updates in seconds - how often should we get data?                                        |
-| CLIENT_CERT      | empty                                                                               | mandatory | User certificate in PEM format                                                                                  |
-| CLIENT_KEY       | empty                                                                               | mandatory | User certificate key file in PEM format                                                                         |
-| API_HOST         | empty                                                                               | mandatory | host or IP for the TAK server API                                                                               |
-| API_PORT         | 8443                                                                                | optional  | TAK server API port                                                                                             |
-| MY_UID           | fmi.0001                                                                            | optional  | Sets the UID used by the feeder                                                                                 |
-| LANG             | en-GB                                                                               | optional  | Feed language to be fetched (en-GB, fi-FI, sv-FI)                                                               |
-| MISSION_NAME     | Weatherwarnings                                                                     | optional  | Name of the mission                                                                                             |
-| FILTER_URGENCY   | Expected,Immediate                                                                  | optional  | Case-sensitive, comma-separated list of urgency codes filter for. Available codes: Immediate, Expected, Future. |
-| FILTER_EVENTCODE | forestFireWeather,hotWeather,rain,<br>seaThunderstorm,seaWind,<br>thunderstorm,wind | optional  | Case-sensitive, comma-separated list of event codes to filter for. Default includes all known.                  |
+Warning types of the [FMI CAP profile](https://alerts.fmi.fi/cap/profile/v1.0.0/fmi-cap-profile-v1.0.0.md):
+`coldWeather`, `forestFireWeather`, `grassFireWeather`, `hotWeather`,
+`pedestrianSafety`, `rain`, `seaIcing`, `seaThunderstorm`, `seaWaterHeight`,
+`seaWaveHeight`, `seaWind`, `thunderstorm`, `trafficWeather`, `uvNote`, `wind`.
 
-## Certificates
+## Running
 
-These are the server-issued certificate and key files. Before using, the password needs to be removed from the key file with `openssl rsa -in cert.key -out cert-nopw.key`. OpenSSL will ask for the key password which usually is "atakatak".
+Image for amd64 and arm64: `ghcr.io/street3r/tak-feeder-weather-warnings-fmi:latest`.
 
-## Container use
-
-First, get your certificate and key and copy them to a suitable folder which needs to be added as a volume to the container.
-
-### Image
-
-The image is built for AMD64 and ARM64 and pushed to ghcr.io: _ghcr.io/sgofferj/tak-feeder-weather-warnings-fmi:latest_
-
-### Docker compose
-
-Here is an example for a docker-compose.yml file:
-
-```
-version: '2.0'
-
+```yaml
 services:
-  weather-fmi:
-    image: ghcr.io/sgofferj/tak-feeder-weather-warnings-fmi:latest
-    restart: always
-    networks:
-      - default
+  feeder-weather-warnings:
+    image: ghcr.io/street3r/tak-feeder-weather-warnings-fmi:latest
+    restart: unless-stopped
+    env_file: .env
     volumes:
-      - <path to data-directory>:/data:ro
-    environment:
-      - COT_URL=ssl://tak-server.domain.tld:8089
-      - CLIENT_CERT=/data/cert.pem
-      - CLIENT_KEY=/data/key.pem
-      - API_HOST=takserver.domain.tld
-networks:
-  default:
+      - ./certs:/data:ro
 ```
+
+The container runs as uid 10001; the key must be readable by it.
+
+## Data
+
+Finnish Meteorological Institute open data,
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The source line is
+in every warning's remarks.
+
+## Credits and changes
+
+Original work © Stefan Gofferje,
+[tak-feeder-weather-warnings-fmi](https://github.com/sgofferj/tak-feeder-weather-warnings-fmi),
+used with his permission. Uses his
+[python-takserver-api](https://github.com/sgofferj/python-takserver-api).
+
+Changes in this fork (Street3r):
+
+- 2026-10-13
+  - **Fixed:** when the TAK API answered something else than 200/404, or
+    creating the mission failed, the loop ran again at once and flooded the
+    TAK server. Every failure now waits `RETRY_INTERVAL`.
+  - **Fixed:** the FMI request had no timeout or error handling; a network
+    error stopped the warning loop. It is now asynchronous with a timeout.
+  - **Fixed:** a warning without a colour inherited the colour of the previous
+    one; an area without a polygon stopped the update. Broken entries are now
+    skipped.
+  - All FMI warning types except UV advisories are included by default
+    (traffic, pedestrian, cold, sea level, wave height, ice accretion and
+    grass fire warnings were missing).
+  - Callsign `FMI <event> <area>`; remarks with description, level, local
+    validity time, source line and `#weather #warning #<event code>` tags.
+  - `MISSION_GROUP` accepts several groups.
+  - Packaged as a Python module; python-takserver-api pinned to a commit
+    instead of a git submodule; health check; unprivileged container; tests
+    and CI.
+
+## License
+
+GNU General Public License v3.0 or later, see [LICENSE](LICENSE).

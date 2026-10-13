@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tak-feeder-weather-warnings-fmi"
+dynamic = ["version"]
+description = "FMI weather warnings as a TAK mission"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Stefan Gofferje" }, { name = "Street3r" }]
+requires-python = ">=3.12"
+dependencies = [
+    "pytak[with-aiohttp]>=7.5.2,<8",
+    "python-takserver-api @ git+https://github.com/sgofferj/python-takserver-api.git@48f410764a6a19a8d97eb4827c860fb771b31dee",
+    "tzdata",
+]
+
+[project.scripts]
+tak-feeder-weather-warnings-fmi = "tak_feeder_weather_warnings_fmi.__main__:run"
+
+[tool.setuptools.dynamic]
+version = { attr = "tak_feeder_weather_warnings_fmi.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json"]
