@@ -28,8 +28,11 @@ def area_cot(area: Area, my_uid: str, mission: str, tz: ZoneInfo, source_line: s
     marti = ET.SubElement(detail, "marti")
     ET.SubElement(marti, "dest", {"mission": mission})
     ET.SubElement(detail, "contact", {"callsign": f"FMI {area.event} {area.area}".strip()})
-    valid = (f"Valid: {area.start.astimezone(tz).strftime('%d.%m. %H:%M')} – "
-             f"{area.stale.astimezone(tz).strftime('%d.%m. %H:%M')}")
+    start, end = area.start.astimezone(tz), area.stale.astimezone(tz)
+    if start.date() == end.date():
+        valid = f"Valid: {start:%d.%m. %H:%M}–{end:%H:%M}"
+    else:
+        valid = f"Valid: {start:%d.%m. %H:%M} – {end:%d.%m. %H:%M}"
     lines = [area.headline, area.description,
              f"Level: {area.color}" if area.color else None, valid]
     ET.SubElement(detail, "remarks").text = remarks_text(

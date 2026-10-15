@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from . import __version__, cap, cot
@@ -59,9 +60,44 @@ class Settings:
         )
 
 
+def cot_signature(event: ET.Element) -> Tuple[Any, ...]:
+    """What ATAK shows of a warning area: type, label, remarks, colours and
+    polygon. Times are left out, the event time changes every round."""
+    detail = event.find("detail")
+
+    def attr(path: str, name: str) -> str:
+        el = detail.find(path) if detail is not None else None
+        return el.get(name, "") if el is not None else ""
+
+    remarks = detail.find("remarks") if detail is not None else None
+    links = detail.findall("link") if detail is not None else []
+    return (
+        event.get("type", ""),
+        attr("contact", "callsign"),
+        (remarks.text or "").strip() if remarks is not None else "",
+        attr("color", "value"),
+        attr("fillColor", "value"),
+        tuple(link.get("point", "").replace(" ", "") for link in links),
+    )
+
+
+def parse_signatures(xml: Any) -> Optional[Dict[str, Tuple[Any, ...]]]:
+    """uid -> signature of the CoT items TAK stores for the mission, None if
+    the response cannot be read."""
+    if isinstance(xml, bytes):
+        xml = xml.decode("utf-8", "replace")
+    if not isinstance(xml, str) or not xml.strip():
+        return None
+    try:
+        root = ET.fromstring(xml.strip())
+    except ET.ParseError:
+        return None
+    return {e.get("uid", ""): cot_signature(e) for e in root.iter("event")}
+
+
 class MissionSync:
     """One sync round: get or create the mission, remove expired warnings,
-    upload a new mission package when the set of warnings changed."""
+    upload a mission package with the new or changed warning areas."""
 
     def __init__(self, settings: Settings, server: Any, build_package: Any) -> None:
         self.s = settings
@@ -95,6 +131,24 @@ class MissionSync:
         else:
             raise RuntimeError(f"mission subscription failed: HTTP {status}")
 
+    async def _changed(self, files: Dict[str, bytes], uids_differ: bool) -> Dict[str, bytes]:
+        """Areas that are new or differ from what TAK stores. If the stored
+        items cannot be read, everything is sent when the set of areas changed
+        (the old behaviour)."""
+        if not files:
+            return {}
+        stored: Optional[Dict[str, Tuple[Any, ...]]] = None
+        try:
+            status, body = await self.server.mission.get_mission_cot(self.s.mission_name)
+            if status == 200:
+                stored = parse_signatures(body)
+        except Exception as exc:  # noqa: BLE001  pylint: disable=broad-exception-caught
+            LOG.debug("Cannot read stored mission items: %s", exc)
+        if stored is None:
+            return dict(files) if uids_differ else {}
+        return {uid: c for uid, c in files.items()
+                if stored.get(uid) != cot_signature(ET.fromstring(c))}
+
     async def run_once(self) -> bool:
         """One round. True if a package was uploaded."""
         await self.subscribe()
@@ -119,16 +173,17 @@ class MissionSync:
                 LOG.warning("Could not remove %s: HTTP %s %s", uid, s, r)
             await asyncio.sleep(3)  # ATAK's DataSync gets confused by fast changes
 
-        if wanted == present:
-            LOG.info("%d warnings, no changes", len(wanted))
-            return False
         files = {a.uid: cot.area_cot(a, self.s.my_uid, self.s.mission_name, self.tz,
                                      self.s.source_line) for a in areas}
+        upload = await self._changed(files, wanted != present)
+        if not upload:
+            LOG.info("%d warnings, no changes", len(wanted))
+            return False
         package = self.build_package(
             name=self.s.mission_name, mission_name=self.s.mission_name,
             mission_server=f"{self.s.api_host}:8443:ssl", creator_uid=self.s.my_uid,
-            cot_files=files, groups=self.s.mission_groups or None)
-        LOG.info("Uploading %d warning areas", len(files))
+            cot_files=upload, groups=self.s.mission_groups or None)
+        LOG.info("Uploading %d of %d warning areas", len(upload), len(files))
         s, r = await self.server.mission.add_mission_package(
             self.s.mission_name, self.s.my_uid, self.token, package)
         if s != 200:

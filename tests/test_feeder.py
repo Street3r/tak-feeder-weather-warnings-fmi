@@ -77,9 +77,13 @@ class CotTest(unittest.TestCase):
         self.assertEqual(ev.find("detail/marti/dest").get("mission"), "Weatherwarnings")
         self.assertEqual(len(ev.findall("detail/link")), 5)
         text = ev.find("detail/remarks").text
-        self.assertIn("Valid: 13.10. 12:00 – 13.10. 21:00", text)
+        self.assertIn("Valid: 13.10. 12:00–21:00", text)  # same day: date once
         self.assertTrue(text.endswith("#weather #warning #wind"))
         self.assertEqual(ev.find("detail/fillColor").get("value"), "1090518784")
+        two_days = feed(entry(info()).replace("2026-10-13T21:00", "2026-10-14T06:00"))
+        (area,) = cap.parse(two_days, "en-GB", ["Expected"], CODES)
+        ev = ET.fromstring(cot.area_cot(area, "fmi.0001", "W", ZoneInfo("Europe/Helsinki"), ""))
+        self.assertIn("Valid: 13.10. 12:00 – 14.10. 06:00", ev.find("detail/remarks").text)
 
 
 def server(status=200, uids=()):
@@ -116,6 +120,45 @@ class SyncTest(unittest.TestCase):
         with mock.patch.object(feeder, "fetch", mock.AsyncMock(return_value=feed(entry(info())))):
             self.assertFalse(asyncio.run(sync.run_once()))
         srv.mission.add_mission_package.assert_not_awaited()
+
+    def stored(self, *entries):
+        """The CoT TAK would return for these areas, with another event time."""
+        settings = feeder.Settings()
+        areas = cap.parse(feed(*entries), "en-GB", ["Expected"], CODES)
+        events = "".join(
+            cot.area_cot(a, settings.my_uid, settings.mission_name, ZoneInfo("Europe/Helsinki"),
+                         settings.source_line).decode().replace('time="', 'time="1999')
+            for a in areas)
+        return [a.uid for a in areas], f'<?xml version="1.0"?><events>{events}</events>'
+
+    def run_with_store(self, srv, stored_xml, *entries):
+        srv.mission.get_mission_cot = mock.AsyncMock(return_value=(200, stored_xml))
+        sync, package = self.sync(srv)
+        with mock.patch.object(feeder, "fetch", mock.AsyncMock(return_value=feed(*entries))), \
+                mock.patch.object(feeder.asyncio, "sleep", mock.AsyncMock()):
+            return asyncio.run(sync.run_once()), package
+
+    def test_only_new_area_sent(self) -> None:
+        one = entry(info())
+        two = entry(info(areas=(("Pirkanmaa", POLY),)), ident="urn:oid:2")
+        uids, xml = self.stored(one)
+        uploaded, package = self.run_with_store(server(uids=uids), xml, one, two)
+        self.assertTrue(uploaded)
+        (sent,) = package.call_args.kwargs["cot_files"]
+        self.assertNotIn(sent, uids)
+
+    def test_changed_area_sent_again(self) -> None:
+        uids, xml = self.stored(entry(info()))
+        xml = xml.replace("Strong winds.", "Old text.")
+        uploaded, package = self.run_with_store(server(uids=uids), xml, entry(info()))
+        self.assertTrue(uploaded)
+        self.assertEqual(list(package.call_args.kwargs["cot_files"]), uids)
+
+    def test_unchanged_store_nothing_sent(self) -> None:
+        uids, xml = self.stored(entry(info()))
+        uploaded, package = self.run_with_store(server(uids=uids), xml, entry(info()))
+        self.assertFalse(uploaded)
+        package.assert_not_called()
 
     def test_mission_created_with_groups(self) -> None:
         srv = server(status=404)
