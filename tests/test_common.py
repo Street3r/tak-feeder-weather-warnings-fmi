@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests for the shared helpers (same file in every fork)."""
 
+import asyncio
 import os
 import tempfile
 import unittest
@@ -79,6 +80,37 @@ class CotTest(unittest.TestCase):
         self.assertEqual(common.as_float(None, 0.0), 0.0)
         self.assertEqual(common.as_float("nan", 1.0), 1.0)
         self.assertEqual(common.as_float("2"), 2.0)
+
+
+class SenderTest(unittest.TestCase):
+    def test_large_round_is_not_dropped(self) -> None:
+        """A round larger than the TX queue waits for room instead of losing
+        the first events."""
+        class Source:
+            async def events(self) -> list:
+                return [str(i).encode() for i in range(250)]
+
+            async def start(self) -> None:
+                pass
+
+        async def main() -> list:
+            queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+            sent: list = []
+
+            async def tx() -> None:
+                while True:
+                    sent.append(await queue.get())
+
+            consumer = asyncio.create_task(tx())
+            await common.Sender(queue, {}, Source(), 0).run(1)
+            while not queue.empty():
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            consumer.cancel()
+            return sent
+
+        sent = asyncio.run(main())
+        self.assertEqual(sent, [str(i).encode() for i in range(250)])
 
 
 if __name__ == "__main__":
