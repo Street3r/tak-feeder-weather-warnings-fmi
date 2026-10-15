@@ -113,6 +113,10 @@ Changes in this fork (Street3r):
   - Packaged as a Python module; python-takserver-api pinned to a commit
     instead of a git submodule; health check; unprivileged container; tests
     and CI.
+- 2026-10-15
+  - Only new or changed warning areas are uploaded. Each round compares the
+    areas with what the mission already stores (type, label, remarks,
+    colours, polygon); unchanged areas are not sent again.
 
 ## License
 
