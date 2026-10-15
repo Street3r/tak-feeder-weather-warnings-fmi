@@ -118,6 +118,9 @@ Changes in this fork (Street3r):
     areas with what the mission already stores (type, label, remarks,
     colours, polygon); unchanged areas are not sent again.
   - Shorter validity within one day: `13.10. 12:00–21:00`.
+  - Every event of a send round reaches TAK. pytak's send queue holds 100
+    events and dropped the oldest when full, so rounds of more than 100
+    lost the rest.
 
 ## License
 

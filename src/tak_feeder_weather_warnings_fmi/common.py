@@ -313,11 +313,13 @@ class Sender(pytak.QueueWorker):  # type: ignore[misc]
         """Unused: events come from the source."""
 
     async def run(self, number_of_iterations: int = -1) -> None:
-        """Send loop."""
+        """Send loop. Waits for room in the queue: pytak's put_queue drops the
+        oldest item when the queue (MAX_OUT_QUEUE, 100) is full, which lost
+        all but the last 100 events of a larger round."""
         while number_of_iterations != 0:
             number_of_iterations -= 1
             for event in await self.source.events():
-                await self.put_queue(event)
+                await self.queue.put(event)
             await asyncio.sleep(self.interval)
 
 
