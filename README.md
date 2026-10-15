@@ -117,6 +117,7 @@ Changes in this fork (Street3r):
   - Only new or changed warning areas are uploaded. Each round compares the
     areas with what the mission already stores (type, label, remarks,
     colours, polygon); unchanged areas are not sent again.
+  - Shorter validity within one day: `13.10. 12:00–21:00`.
 
 ## License
 

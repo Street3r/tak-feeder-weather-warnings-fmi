@@ -77,9 +77,13 @@ class CotTest(unittest.TestCase):
         self.assertEqual(ev.find("detail/marti/dest").get("mission"), "Weatherwarnings")
         self.assertEqual(len(ev.findall("detail/link")), 5)
         text = ev.find("detail/remarks").text
-        self.assertIn("Valid: 13.10. 12:00 – 13.10. 21:00", text)
+        self.assertIn("Valid: 13.10. 12:00–21:00", text)  # same day: date once
         self.assertTrue(text.endswith("#weather #warning #wind"))
         self.assertEqual(ev.find("detail/fillColor").get("value"), "1090518784")
+        two_days = feed(entry(info()).replace("2026-10-13T21:00", "2026-10-14T06:00"))
+        (area,) = cap.parse(two_days, "en-GB", ["Expected"], CODES)
+        ev = ET.fromstring(cot.area_cot(area, "fmi.0001", "W", ZoneInfo("Europe/Helsinki"), ""))
+        self.assertIn("Valid: 13.10. 12:00 – 14.10. 06:00", ev.find("detail/remarks").text)
 
 
 def server(status=200, uids=()):
