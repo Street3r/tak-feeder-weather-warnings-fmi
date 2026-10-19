@@ -289,6 +289,111 @@ def as_float(value: Any, default: Optional[float] = None) -> Optional[float]:
     return default if result != result else result  # NaN -> default
 
 
+# ------------------------------------------------------------ send rates
+@dataclass
+class SendPolicy:
+    """How often objects are sent to TAK, independent of how often the data
+    source is read. Moving objects (speed at or above STATIONARY_SPEED m/s)
+    are sent every SEND_MOVING_INTERVAL seconds, stopped ones every
+    SEND_STATIONARY_INTERVAL and fixed objects (weather stations, events)
+    every SEND_STATIC_INTERVAL. The latest known state is re-sent when the
+    source has nothing newer, so a newly connected client sees every object
+    within one interval.
+
+    Lookup order for each interval: the SEND_* variable, the feeder's old
+    variable (UPDATE_INTERVAL, REFRESH_INTERVAL), then the FEEDER_SEND_*
+    default compose passes to every feeder."""
+
+    MIN_MOVING = 1.0
+    MIN_STATIONARY = 30.0
+    MIN_STATIC = 30.0
+    MIN_STALE = 180.0
+
+    moving: float = 5.0
+    stationary: float = 60.0
+    static: float = 60.0
+    stationary_speed: float = 0.5  # m/s
+    stale: float = 0.0  # STALE_SECONDS; 0 = automatic
+
+    @classmethod
+    def from_env(
+        cls,
+        environ: Optional[Mapping[str, str]] = None,
+        moving_aliases: Sequence[str] = ("UPDATE_INTERVAL",),
+        stationary_aliases: Sequence[str] = ("REFRESH_INTERVAL",),
+        static_aliases: Sequence[str] = (),
+    ) -> "SendPolicy":
+        """Read the send intervals. Values below the minimum are raised to it."""
+        d = cls()
+
+        def interval(name: str, aliases: Sequence[str], default: float, minimum: float) -> float:
+            value = env_float(name, default, *aliases, f"FEEDER_{name}", environ=environ)
+            if value < minimum:
+                LOG.warning("%s=%g is below the minimum, using %g", name, value, minimum)
+                return minimum
+            return value
+
+        return cls(
+            moving=interval("SEND_MOVING_INTERVAL", moving_aliases, d.moving, cls.MIN_MOVING),
+            stationary=interval("SEND_STATIONARY_INTERVAL", stationary_aliases,
+                                d.stationary, cls.MIN_STATIONARY),
+            static=interval("SEND_STATIC_INTERVAL", static_aliases, d.static, cls.MIN_STATIC),
+            stationary_speed=max(0.0, env_float("STATIONARY_SPEED", d.stationary_speed,
+                                                "FEEDER_STATIONARY_SPEED", environ=environ)),
+            stale=max(0.0, env_float("STALE_SECONDS", d.stale, environ=environ)),
+        )
+
+    def is_moving(self, speed: Optional[float]) -> bool:
+        """Unknown speed counts as moving, so the object is never left behind."""
+        return speed is None or speed >= self.stationary_speed
+
+    def interval(self, speed: Optional[float]) -> float:
+        """Send interval for a moving object with this speed (m/s)."""
+        return self.moving if self.is_moving(speed) else self.stationary
+
+    def stale_for(self, interval: float) -> float:
+        """Stale time for an object sent every interval seconds: STALE_SECONDS
+        (default 180 s), but always at least three intervals."""
+        return max(self.stale or self.MIN_STALE, 3 * interval)
+
+
+class SendSchedule:
+    """Per-object send times for moving objects. An object is due when its
+    interval has passed since the last send, or at once when it stops, so its
+    final position is not left waiting for the stationary interval."""
+
+    TOLERANCE = 0.2  # seconds; rounds start slightly late
+
+    def __init__(self, policy: SendPolicy) -> None:
+        self.policy = policy
+        self._sent: dict[str, tuple[float, bool]] = {}  # uid -> (time, was moving)
+
+    def due(self, uid: str, speed: Optional[float], now: float) -> bool:
+        """True if the object should be sent this round."""
+        last = self._sent.get(uid)
+        if last is None:
+            return True
+        sent_at, was_moving = last
+        moving = self.policy.is_moving(speed)
+        if was_moving and not moving:
+            return True
+        return now - sent_at >= self.policy.interval(speed) - self.TOLERANCE
+
+    def mark(self, uid: str, speed: Optional[float], now: float) -> None:
+        """Record a send."""
+        self._sent[uid] = (now, self.policy.is_moving(speed))
+
+    def forget(self, uid: str) -> None:
+        """Drop an object that is gone."""
+        self._sent.pop(uid, None)
+
+    def keep_only(self, uids: Iterable[str]) -> None:
+        """Drop every object not in uids."""
+        keep = set(uids)
+        for uid in [u for u in self._sent if u not in keep]:
+            del self._sent[uid]
+
+
 # ----------------------------------------------------------- send to TAK
 class Source(Protocol):
     """A data source: start() runs in the background, events() is polled."""
@@ -301,7 +406,8 @@ class Source(Protocol):
 
 
 class Sender(pytak.QueueWorker):  # type: ignore[misc]
-    """Polls the source every interval seconds and queues its CoT events."""
+    """Polls the source every interval seconds (measured from the start of a
+    round) and queues its CoT events."""
 
     def __init__(self, queue: asyncio.Queue[bytes], config: SectionProxy,
                  source: Source, interval: float) -> None:
@@ -318,9 +424,10 @@ class Sender(pytak.QueueWorker):  # type: ignore[misc]
         all but the last 100 events of a larger round."""
         while number_of_iterations != 0:
             number_of_iterations -= 1
+            started = time.monotonic()
             for event in await self.source.events():
                 await self.queue.put(event)
-            await asyncio.sleep(self.interval)
+            await asyncio.sleep(max(0.0, self.interval - (time.monotonic() - started)))
 
 
 class RxDrain(pytak.QueueWorker):  # type: ignore[misc]

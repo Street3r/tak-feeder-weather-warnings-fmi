@@ -113,5 +113,47 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(sent, [str(i).encode() for i in range(250)])
 
 
+class SendPolicyTest(unittest.TestCase):
+    def test_defaults_and_minimums(self) -> None:
+        p = common.SendPolicy.from_env({})
+        self.assertEqual((p.moving, p.stationary, p.static), (5.0, 60.0, 60.0))
+        p = common.SendPolicy.from_env({"SEND_MOVING_INTERVAL": "0.2",
+                                        "SEND_STATIONARY_INTERVAL": "5",
+                                        "SEND_STATIC_INTERVAL": "1"})
+        self.assertEqual((p.moving, p.stationary, p.static), (1.0, 30.0, 30.0))
+
+    def test_lookup_order(self) -> None:
+        env = {"FEEDER_SEND_MOVING_INTERVAL": "7", "UPDATE_INTERVAL": "3"}
+        self.assertEqual(common.SendPolicy.from_env(env).moving, 3.0)
+        env["SEND_MOVING_INTERVAL"] = "2"
+        self.assertEqual(common.SendPolicy.from_env(env).moving, 2.0)
+        self.assertEqual(common.SendPolicy.from_env({"FEEDER_SEND_MOVING_INTERVAL": "7"}).moving, 7.0)
+        p = common.SendPolicy.from_env({"UPDATE_INTERVAL": "90"}, moving_aliases=(),
+                                       static_aliases=("UPDATE_INTERVAL",))
+        self.assertEqual((p.moving, p.static), (5.0, 90.0))
+
+    def test_stale(self) -> None:
+        p = common.SendPolicy()
+        self.assertEqual(p.stale_for(5), 180)
+        self.assertEqual(p.stale_for(120), 360)
+        self.assertEqual(common.SendPolicy(stale=300).stale_for(60), 300)
+
+    def test_schedule(self) -> None:
+        sched = common.SendSchedule(common.SendPolicy(moving=5, stationary=60))
+        self.assertTrue(sched.due("a", 10.0, 0))
+        sched.mark("a", 10.0, 0)
+        self.assertFalse(sched.due("a", 10.0, 4))
+        self.assertTrue(sched.due("a", 10.0, 5))   # same position is re-sent
+        sched.mark("a", 10.0, 5)
+        self.assertTrue(sched.due("a", 0.0, 6))    # stopped: sent at once
+        sched.mark("a", 0.0, 6)
+        self.assertFalse(sched.due("a", 0.0, 30))
+        self.assertTrue(sched.due("a", 0.0, 66))
+        sched.mark("a", 0.0, 66)
+        self.assertTrue(sched.due("a", 3.0, 71))   # moving again
+        sched.keep_only([])
+        self.assertTrue(sched.due("a", 0.0, 72))
+
+
 if __name__ == "__main__":
     unittest.main()
