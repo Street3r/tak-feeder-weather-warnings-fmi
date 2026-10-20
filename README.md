@@ -1,9 +1,8 @@
 # tak-feeder-weather-warnings-fmi
 
-> [!WARNING]
-> **Work in progress. Not recommended for use.** This fork is being improved
-> and has not been tested against a live TAK server yet. Things may change or
-> break without notice.
+> [!NOTE]
+> Tested with live data and TAK Server 5.8 (October 2026).
+> Settings and CoT details may still change.
 
 Gets the weather warnings of the Finnish Meteorological Institute (FMI) and
 keeps a TAK server mission in sync with them: each warning area is a polygon
