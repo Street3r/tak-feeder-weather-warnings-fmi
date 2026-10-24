@@ -11,7 +11,7 @@ license = "GPL-3.0-or-later"
 authors = [{ name = "Stefan Gofferje" }, { name = "Street3r" }]
 requires-python = ">=3.12"
 dependencies = [
-    "pytak[with-aiohttp]>=7.5.2,<8",
+    "pytak[with-aiohttp,with-crypto]>=7.5.2,<8",
     "python-takserver-api @ git+https://github.com/sgofferj/python-takserver-api.git@48f410764a6a19a8d97eb4827c860fb771b31dee",
     "tzdata",
 ]
