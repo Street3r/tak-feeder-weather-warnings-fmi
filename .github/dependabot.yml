@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Workflow actions (one grouped PR)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns: ["*"]
+  # Python base image in the Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+  # pyproject.toml ranges (a PR only when a new release falls outside a range,
+  # e.g. pytak 8)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
