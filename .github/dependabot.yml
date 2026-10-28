@@ -13,9 +13,15 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    # Python 3.12 is supported until 2028-10; a move to a newer Python is
+    # a deliberate change, not a routine update.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   # pyproject.toml ranges (a PR only when a new release falls outside a range,
   # e.g. pytak 8)
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "monthly"
+    versioning-strategy: "increase-if-necessary"
